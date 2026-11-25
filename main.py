@@ -1,184 +1,243 @@
 #!/usr/bin/env python3
-"""One-line excuse for a missed deadline.
+"""One Line, No Deadline Met -- entry generator.
 
-Writes a single original one-line joke excusing a missed deadline
-(at most 200 characters) to /output/entry.txt.
+Bounty brief, in my own words: write a single line that works as an
+excuse for missing a deadline, and make it funny. The line itself is
+the whole submission, so it has to do all of the work on its own.
 
-How it picks the line: twelve original candidate excuses, each written
-for this entry, are scored against the judge's five criteria, in the
-judge's own order of importance:
+The judges weigh five things, and I score every candidate against
+all five:
 
-  1. it really is an excuse for a missed deadline
-  2. it is funny
-  3. it works as a single line
-  4. it sounds like something a person would actually say
-  5. the angle is fresh
+  1. excuse -- does it actually read as an excuse for a missed
+     deadline, not just a joke that happens to mention work?
+  2. humour -- is it funny on first reading, without needing a
+     setup or a second sentence to land?
+  3. one-liner -- does it stand alone as one line, with a single
+     clean image and no trailing explanation?
+  4. human -- does it sound like something a real person would
+     actually say out loud, not like a line written by a committee?
+  5. fresh angle -- is the idea one you have not heard a hundred
+     times before in deadline jokes?
 
-Each criterion is rated 0-5 and weighted 4, 3, 2, 3, 2, matching the
-judge's priority order. The highest total wins; ties go to the
-earliest candidate in the list, so the choice is fully deterministic.
-
-The winning candidate then gets one genuine revision pass: the
-first draft is reworked (not just retyped) to fix its weak spots,
-and the revised line is re-scored to confirm it is still the best.
-
-No network, no external input, no randomness. The program verifies
-its own output (1-200 characters, a single line, UTF-8) and prints
-the SHA-256 of the file it wrote.
+This script drafts a slate of original candidates, scores each one
+on those five axes, picks the highest scorer, writes it to
+/output/entry.txt, and then reads the file back to prove the output
+is exactly what was chosen. The selection is fully deterministic:
+run it twice and you get byte-identical output.
 """
 
-from hashlib import sha256
-from os import environ, makedirs
-from sys import exit as finish, stderr
+import hashlib
+import os
+import sys
 
-# Weights for the five judge criteria, in the judge's priority order:
-# excuse, funny, one-line, sounds-human, fresh.
-WEIGHTS = (4, 3, 2, 3, 2)
+# The brief caps the entry at 200 characters, and the gate refuses
+# blank or whitespace-only text. We stay well inside both limits.
+MAX_CHARS = 200
+OUTPUT_PATH = "/output/entry.txt"
 
-# Each candidate: (text, (excuse, funny, one-line, sounds-human, fresh)).
-# All twelve lines are original, written for this entry.
+# ---------------------------------------------------------------------------
+# Candidates
+#
+# Twelve original one-liners, each written for this brief. They all
+# play the same game -- reframe the missed deadline as something
+# that was, in the speaker's telling, almost reasonable -- but each
+# one takes a different angle so the scoring has real choices to
+# make. Candidate 7 is the one I expect to win: the marinating
+# metaphor turns procrastination into slow cooking, and then the
+# punchline admits the food went off.
+# ---------------------------------------------------------------------------
+
 CANDIDATES = [
-    (
-        "My deadline and I had a meeting. It didn't show up either.",
-        (3, 3, 4, 4, 2),
-    ),
-    (
-        "I didn't miss the deadline, I just gave it a head start and "
-        "never caught up.",
-        (4, 3, 5, 4, 3),
-    ),
-    (
-        "The deadline moved, I swear. It was Friday when I last checked, "
-        "and now it's somehow last Friday.",
-        (4, 3, 4, 4, 3),
-    ),
-    (
-        "I was going to finish it on time, but then my laptop updated, "
-        "my Wi-Fi died, and my motivation filed for unemployment.",
-        (4, 2, 3, 4, 2),
-    ),
-    (
-        "I treated the deadline like a gym membership: paid for it, "
-        "planned to use it, never showed up.",
-        (5, 4, 5, 5, 4),
-    ),
-    (
-        "Technically I met the deadline — I just met it three days late, "
-        "which is still meeting it if you squint.",
-        (4, 3, 4, 4, 3),
-    ),
-    (
-        "My calendar said the deadline was Friday. My calendar also said "
-        "I had a dentist appointment in 2019, so clearly it lies.",
-        (4, 2, 4, 4, 3),
-    ),
-    (
-        "I didn't procrastinate, I was letting the work marinate. "
-        "Unfortunately it marinated past its expiry date.",
-        (5, 4, 5, 5, 5),
-    ),
-    (
-        "The deadline was 5pm. I submitted at 5pm. Nobody said which "
-        "day's 5pm.",
-        (5, 4, 5, 5, 4),
-    ),
-    (
-        "I outsourced the deadline to Future Me. Future Me has now filed "
-        "a complaint against Past Me.",
-        (4, 4, 5, 4, 4),
-    ),
-    (
-        "I finished it right on time — the problem is my clock runs on "
-        "island time and the island is sinking.",
-        (4, 3, 4, 4, 3),
-    ),
-    (
-        "My dog didn't eat my homework, he ate my deadline. He's very "
-        "thorough.",
-        (4, 3, 5, 4, 2),
-    ),
+    # 1. The calendar did it.
+    "My calendar said the deadline was Friday, but it never said "
+    "which Friday.",
+
+    # 2. The deadline was shy.
+    "I didn't miss the deadline, the deadline moved and forgot to "
+    "tell me.",
+
+    # 3. Time zones, blamed in earnest.
+    "I finished it on time in a different time zone, which I feel "
+    "should count for something.",
+
+    # 4. The work needed rest too.
+    "I gave the project a long weekend so it could come back "
+    "refreshed, and now neither of us is ready.",
+
+    # 5. A watched pot.
+    "I kept checking on the deadline so often that it got nervous "
+    "and left early.",
+
+    # 6. The dog ate my homework, grown up.
+    "My laptop updated itself at the worst possible moment and took "
+    "my motivation with it.",
+
+    # 7. The marinating excuse -- the winner.
+    "I wasn't procrastinating, I was letting the work marinate "
+    "\u2014 it just marinated three days past its expiry date.",
+
+    # 8. The deadline as a mirage.
+    "Every time I got close to the deadline it turned out to be a "
+    "milestone in disguise, and milestones don't count.",
+
+    # 9. Delegation, taken literally.
+    "I delegated the deadline to future me, and future me has "
+    "filed a formal complaint.",
+
+    # 10. The deadline as a suggestion.
+    "I treated the deadline as more of a rough guideline, and it "
+    "turns out guidelines have feelings too.",
+
+    # 11. Slow and steady, too steady.
+    "I was pacing myself for a marathon and only just realised "
+    "this was a sprint with a finish line last Tuesday.",
+
+    # 12. The honest one.
+    "I kept meaning to start early, and I meant it every single "
+    "day right up until the day after it was due.",
 ]
 
-# Revision pass on the winner (candidate 8). Weak spots in the draft:
-# "Unfortunately" reads stiff and formal, and the two short sentences
-# make the line feel chopped up. The revision tightens it into one
-# flowing sentence, swaps in a plainer human voice ("wasn't"), and
-# pins the lateness down with a concrete "three days" so the excuse
-# lands harder. Re-scored (5, 4, 5, 5, 5) = 67, still the best.
-REVISED = (
-    "I wasn't procrastinating, I was letting the work marinate — it "
-    "just marinated three days past its expiry date.",
-    (5, 4, 5, 5, 5),
-)
+
+# ---------------------------------------------------------------------------
+# Scoring
+#
+# Each axis is scored 0-10 by hand, in the table below. The weights
+# mirror how the brief reads to me: the excuse has to land first
+# (it is, after all, an excuse), the joke has to be funny, and the
+# rest -- standing alone, sounding human, feeling fresh -- share the
+# remainder. Scores are fixed constants, not computed from the text,
+# because judging a joke is a human call and pretending a formula
+# could do it would be dishonest. What the code does guarantee is
+# that the same scores always pick the same winner.
+# ---------------------------------------------------------------------------
+
+# Weights sum to 1.0.
+WEIGHTS = {
+    "excuse": 0.30,
+    "humour": 0.30,
+    "one_liner": 0.15,
+    "human": 0.15,
+    "fresh": 0.10,
+}
+
+# Hand scores, one row per candidate, in the same order as above.
+# Rationale for the winner, candidate 7: it is a genuine excuse
+# ("I wasn't procrastinating" is the classic opening of one), the
+# marinating image is funny and visual, it is a single self-contained
+# line, it sounds like something a person would actually say to a
+# manager, and the expiry-date twist is a fresher turn than blaming
+# the calendar or the laptop. The runners-up lose on freshness
+# (calendar jokes, laptop jokes) or on the excuse axis (several are
+# jokes about deadlines rather than excuses for missing one).
+SCORES = [
+    # excuse, humour, one-liner, human, fresh
+    (7, 6, 9, 8, 4),    # 1: calendar -- clean, but an old joke
+    (8, 6, 8, 7, 5),    # 2: shy deadline -- decent excuse, thin joke
+    (8, 7, 8, 8, 5),    # 3: time zones -- likeable, not new
+    (6, 7, 7, 7, 6),    # 4: long weekend -- more joke than excuse
+    (6, 7, 8, 6, 6),    # 5: watched pot -- cute, excuse is weak
+    (7, 5, 7, 8, 3),    # 6: laptop update -- everyone has said it
+    (10, 9, 9, 9, 8),   # 7: marinating -- the winner
+    (6, 7, 7, 6, 6),    # 8: mirage -- clever, but it dodges blame
+    (7, 8, 8, 8, 6),    # 9: future me -- strong, second place
+    (8, 6, 7, 7, 5),    # 10: guideline -- solid, forgettable
+    (7, 6, 8, 7, 5),    # 11: marathon -- fine, no punch
+    (8, 7, 9, 9, 4),    # 12: honest one -- human, but no twist
+]
 
 
-def rate(ratings):
-    """Weighted total for one candidate's five criterion ratings."""
-    return sum(w * r for w, r in zip(WEIGHTS, ratings))
+def weighted_total(row):
+    """Combine one candidate's five axis scores into a total.
 
-
-def choose(candidates):
-    """Return (index, text, total) of the best candidate.
-
-    Deterministic: strictly greater totals replace the leader, so the
-    earliest candidate wins any tie.
+    The tuple order matches AXES below, so the pairing is explicit
+    and cannot silently drift if the weights dict is reordered.
     """
-    best_index, best_text, best_total = -1, "", -1
-    for index, (text, ratings) in enumerate(candidates):
-        total = rate(ratings)
-        if total > best_total:
-            best_index, best_text, best_total = index, text, total
-    return best_index, best_text, best_total
+    axes = ["excuse", "humour", "one_liner", "human", "fresh"]
+    total = 0.0
+    for axis, score in zip(axes, row):
+        total += score * WEIGHTS[axis]
+    return round(total, 2)
 
 
-def gate(text):
-    """Gate the chosen line the way the sealed scorer does."""
-    if not (1 <= len(text) <= 200):
-        return "length %d is outside 1..200 characters" % len(text)
-    if text.strip() != text or not text.strip():
-        return "entry is blank or has surrounding whitespace"
-    if "\n" in text or "\r" in text:
-        return "entry is not a single line"
-    return None
+def rank_candidates():
+    """Score every candidate and return them best-first.
+
+    Ties are broken by original order (stable sort), so the ranking
+    is deterministic and the winner never depends on dict ordering
+    or hash randomisation.
+    """
+    ranked = []
+    for index, (line, row) in enumerate(zip(CANDIDATES, SCORES)):
+        ranked.append((weighted_total(row), index, line))
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return ranked
 
 
-def run():
-    index, _draft, draft_total = choose(CANDIDATES)
-    text, ratings = REVISED
-    total = rate(ratings)
-    if total < draft_total:
-        print("revision made the winner worse, keeping the draft",
-              file=stderr)
-        return 1
-    # The revision must still beat every other candidate, not just its
-    # own draft: re-run the ranking with the revised line in place of
-    # the draft and confirm it still comes out on top.
-    revised_pool = list(CANDIDATES)
-    revised_pool[index] = (text, ratings)
-    best_index, _best_text, best_total = choose(revised_pool)
-    if best_index != index or best_total != total:
-        print("revision lost the lead to candidate %d" % (best_index + 1),
-              file=stderr)
-        return 1
+def check_entry(line):
+    """Enforce the brief's hard limits before anything is written."""
+    if not line or not line.strip():
+        raise ValueError("entry must not be blank")
+    if len(line) > MAX_CHARS:
+        raise ValueError(
+            "entry is %d characters, over the %d limit"
+            % (len(line), MAX_CHARS)
+        )
+    if "\n" in line or "\r" in line:
+        raise ValueError("entry must be a single line")
 
-    problem = gate(text)
-    if problem is not None:
-        print("self-check failed: %s" % problem, file=stderr)
-        return 1
 
-    out_path = environ.get("OUTPUT_PATH", "/output/entry.txt")
-    out_dir = out_path.rsplit("/", 1)[0] if "/" in out_path else ""
-    if out_dir:
-        makedirs(out_dir, exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as handle:
-        handle.write(text)
-    digest = sha256(text.encode("utf-8")).hexdigest()
-    print("candidate %d of %d, draft score %d, revised score %d"
-          % (index + 1, len(CANDIDATES), draft_total, total))
-    print("entry: %s" % text)
-    print("chars: %d" % len(text))
+def write_entry(line):
+    """Write the entry and prove the file matches, byte for byte.
+
+    The file is written with no trailing newline: the brief asks for
+    one line of text, and a trailing newline would make the file
+    contain a second, empty line. After writing, the file is read
+    back and compared against the chosen line, and its SHA-256 is
+    printed so any later run can be checked for drift.
+    """
+    check_entry(line)
+    directory = os.path.dirname(OUTPUT_PATH)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    with open(OUTPUT_PATH, "w", encoding="utf-8", newline="") as handle:
+        handle.write(line)
+    with open(OUTPUT_PATH, "rb") as handle:
+        raw = handle.read()
+    if raw != line.encode("utf-8"):
+        raise ValueError("written file does not match the chosen entry")
+    digest = hashlib.sha256(raw).hexdigest()
+    print("wrote %s (%d chars)" % (OUTPUT_PATH, len(line)))
     print("sha256: %s" % digest)
+    return digest
+
+
+def main():
+    # Sanity checks on the slate itself, before any scoring runs:
+    # enough candidates to choose from, one score row per candidate,
+    # and every axis score inside its 0-10 range. A typo in the
+    # table should fail loudly here, not silently pick a wrong line.
+    if len(CANDIDATES) < 10:
+        raise ValueError("need at least 10 candidates, have %d"
+                         % len(CANDIDATES))
+    if len(SCORES) != len(CANDIDATES):
+        raise ValueError("score rows (%d) do not match candidates (%d)"
+                         % (len(SCORES), len(CANDIDATES)))
+    for row in SCORES:
+        if len(row) != 5 or any(not 0 <= s <= 10 for s in row):
+            raise ValueError("bad score row: %r" % (row,))
+    if len(set(CANDIDATES)) != len(CANDIDATES):
+        raise ValueError("duplicate candidate lines")
+    ranked = rank_candidates()
+    print("candidate scores (best first):")
+    for total, index, line in ranked:
+        print("  #%02d  %.2f  %s" % (index + 1, total, line))
+    best_total, _, winner = ranked[0]
+    print("winner: #%02d with %.2f" % (ranked[0][1] + 1, best_total))
+    write_entry(winner)
     return 0
 
 
-finish(run())
+if __name__ == "__main__":
+    sys.exit(main())
+
+
